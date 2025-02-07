@@ -5,9 +5,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QPushButton, QScrollArea, QLabel, QFrame,
                            QHBoxLayout, QMessageBox, QLineEdit, QMenu,
                            QInputDialog, QDialog, QPlainTextEdit)
-from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QPropertyAnimation, QEasingCurve, QSize, QPointF
 from PyQt6.QtGui import (QPalette, QColor, QScreen, QPainter, QLinearGradient, 
-                        QPen, QBrush, QPainterPath, QCursor)
+                        QPen, QBrush, QPainterPath, QCursor, QRadialGradient)
 import pyperclip
 
 class CustomMenu(QMenu):
@@ -439,6 +439,15 @@ class ClipboardManager(QMainWindow):
         self.init_ui()
         self.load_settings()
         
+        self.is_collapsed = False
+        self.original_size = None
+        self.collapsed_size = QSize(60, 60)  # 修改为正圆形，直径60像素
+        
+        # 添加检测窗口位置的定时器
+        self.check_position_timer = QTimer(self)
+        self.check_position_timer.timeout.connect(self.check_window_position)
+        self.check_position_timer.start(100)  # 每100ms检查一次
+        
     def init_ui(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -633,7 +642,7 @@ class ClipboardManager(QMainWindow):
         # 关闭按钮
         close_button = QPushButton("×")
         close_button.setFixedSize(24, 24)
-        close_button.clicked.connect(self.close_application)  # 修改为新的关闭方法
+        close_button.clicked.connect(self.close_application)
         close_button.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -719,7 +728,8 @@ class ClipboardManager(QMainWindow):
             self.search_clips(self.search_input.text())
             
     def mousePressEvent(self, event):
-        pass  # 移除主窗口的鼠标事件处理
+        if self.is_collapsed and event.button() == Qt.MouseButton.LeftButton:
+            self.expand_from_float_ball()
             
     def mouseMoveEvent(self, event):
         pass
@@ -775,19 +785,125 @@ class ClipboardManager(QMainWindow):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # 绘制主窗口背景
-        gradient = QLinearGradient(0, 0, 0, self.height())
-        gradient.setColorAt(0, QColor(255, 255, 255, 245))
-        gradient.setColorAt(1, QColor(236, 240, 241, 245))
+        if self.is_collapsed:
+            # 创建圆形渐变
+            center = self.rect().center()
+            gradient = QRadialGradient(
+                QPointF(center.x(), center.y()),
+                self.collapsed_size.width()/2
+            )
+            gradient.setColorAt(0, QColor(255, 255, 255, 245))
+            gradient.setColorAt(1, QColor(236, 240, 241, 245))
+            
+            painter.setPen(Qt.PenStyle.NoPen)  # 移除边框
+            painter.setBrush(QBrush(gradient))
+            painter.drawEllipse(self.rect())
+            
+            # 绘制图标
+            painter.setPen(QPen(QColor(107, 114, 128)))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "📋")
+        else:
+            # 原来的窗口绘制代码
+            gradient = QLinearGradient(0, 0, 0, self.height())
+            gradient.setColorAt(0, QColor(255, 255, 255, 245))
+            gradient.setColorAt(1, QColor(236, 240, 241, 245))
+            
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(gradient))
+            painter.drawRoundedRect(self.rect(), 15, 15)
+            
+            painter.setPen(QPen(QColor(189, 195, 199, 100), 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 15, 15)
+
+    def check_window_position(self):
+        if self.is_collapsed:
+            return
+            
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        window_geometry = self.geometry()
         
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(gradient))
-        painter.drawRoundedRect(self.rect(), 15, 15)
+        # 计算窗口有多少比例在屏幕外
+        visible_width = window_geometry.width()
+        if window_geometry.left() < screen_geometry.left():
+            visible_width += window_geometry.left() - screen_geometry.left()
+        elif window_geometry.right() > screen_geometry.right():
+            visible_width -= window_geometry.right() - screen_geometry.right()
+            
+        # 如果可见部分小于三分之二，则折叠成悬浮球
+        if visible_width < window_geometry.width() * 2/3:
+            self.collapse_to_float_ball()
+            
+    def collapse_to_float_ball(self):
+        if self.is_collapsed:
+            return
+            
+        self.is_collapsed = True
+        self.original_size = self.size()
+        self.original_pos = self.pos()
         
-        # 绘制边框
-        painter.setPen(QPen(QColor(189, 195, 199, 100), 1))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 15, 15)
+        self.central_widget.hide()
+        
+        self.anim = QPropertyAnimation(self, b"geometry")
+        self.anim.setDuration(300)
+        
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        current_pos = self.pos()
+        
+        # 调整位置，确保圆形完全在屏幕内
+        if current_pos.x() < screen_geometry.center().x():
+            target_x = screen_geometry.left() + 5  # 留出小边距
+        else:
+            target_x = screen_geometry.right() - self.collapsed_size.width() - 5
+            
+        target_y = max(min(current_pos.y(), 
+                          screen_geometry.bottom() - self.collapsed_size.height() - 5),
+                      screen_geometry.top() + 5)
+        
+        start_geometry = self.geometry()
+        end_geometry = QRect(QPoint(int(target_x), int(target_y)), self.collapsed_size)
+        
+        self.anim.setStartValue(start_geometry)
+        self.anim.setEndValue(end_geometry)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim.start()
+        
+    def expand_from_float_ball(self):
+        if not self.is_collapsed:
+            return
+            
+        self.is_collapsed = False
+        
+        # 创建动画
+        self.anim = QPropertyAnimation(self, b"geometry")
+        self.anim.setDuration(300)
+        
+        # 计算展开位置
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        current_pos = self.pos()
+        
+        # 确定展开方向
+        if current_pos.x() < screen_geometry.center().x():
+            target_x = screen_geometry.left() + 10
+        else:
+            target_x = screen_geometry.right() - self.original_size.width() - 10
+            
+        # 设置动画
+        start_geometry = self.geometry()
+        end_geometry = QRect(QPoint(target_x, current_pos.y()), self.original_size)
+        
+        self.anim.setStartValue(start_geometry)
+        self.anim.setEndValue(end_geometry)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim.finished.connect(self.show_content)
+        self.anim.start()
+        
+    def show_content(self):
+        # 显示所有控件
+        self.central_widget.show()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
