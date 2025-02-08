@@ -441,7 +441,8 @@ class ClipboardManager(QMainWindow):
         
         self.is_collapsed = False
         self.original_size = None
-        self.collapsed_size = QSize(60, 60)  # 修改为正圆形，直径60像素
+        self.collapsed_size = QSize(20, 20)  # 缩小球的尺寸为原来的三分之一
+        self.is_animating = False  # 添加动画状态标记
         
         # 添加检测窗口位置的定时器
         self.check_position_timer = QTimer(self)
@@ -817,7 +818,7 @@ class ClipboardManager(QMainWindow):
             painter.drawRoundedRect(self.rect().adjusted(0, 0, -1, -1), 15, 15)
 
     def check_window_position(self):
-        if self.is_collapsed:
+        if self.is_collapsed or self.is_animating:  # 在动画过程中不检测
             return
             
         screen = QApplication.primaryScreen()
@@ -840,6 +841,7 @@ class ClipboardManager(QMainWindow):
             return
             
         self.is_collapsed = True
+        self.is_animating = True  # 开始动画
         self.original_size = self.size()
         self.original_pos = self.pos()
         
@@ -852,11 +854,11 @@ class ClipboardManager(QMainWindow):
         screen_geometry = screen.availableGeometry()
         current_pos = self.pos()
         
-        # 调整位置，确保圆形完全在屏幕内
+        # 调整位置，让球稍微露出屏幕外一点
         if current_pos.x() < screen_geometry.center().x():
-            target_x = screen_geometry.left() + 5  # 留出小边距
+            target_x = screen_geometry.left() - self.collapsed_size.width() // 3
         else:
-            target_x = screen_geometry.right() - self.collapsed_size.width() - 5
+            target_x = screen_geometry.right() - self.collapsed_size.width() * 2 // 3
             
         target_y = max(min(current_pos.y(), 
                           screen_geometry.bottom() - self.collapsed_size.height() - 5),
@@ -868,6 +870,7 @@ class ClipboardManager(QMainWindow):
         self.anim.setStartValue(start_geometry)
         self.anim.setEndValue(end_geometry)
         self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.anim.finished.connect(lambda: setattr(self, 'is_animating', False))  # 动画结束
         self.anim.start()
         
     def expand_from_float_ball(self):
@@ -875,12 +878,11 @@ class ClipboardManager(QMainWindow):
             return
             
         self.is_collapsed = False
+        self.is_animating = True  # 开始动画
         
-        # 创建动画
         self.anim = QPropertyAnimation(self, b"geometry")
         self.anim.setDuration(300)
         
-        # 计算展开位置
         screen = QApplication.primaryScreen()
         screen_geometry = screen.availableGeometry()
         current_pos = self.pos()
@@ -891,14 +893,18 @@ class ClipboardManager(QMainWindow):
         else:
             target_x = screen_geometry.right() - self.original_size.width() - 10
             
-        # 设置动画
         start_geometry = self.geometry()
         end_geometry = QRect(QPoint(target_x, current_pos.y()), self.original_size)
         
         self.anim.setStartValue(start_geometry)
         self.anim.setEndValue(end_geometry)
         self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
-        self.anim.finished.connect(self.show_content)
+        
+        def animation_finished():
+            self.is_animating = False  # 动画结束
+            self.show_content()
+            
+        self.anim.finished.connect(animation_finished)
         self.anim.start()
         
     def show_content(self):
