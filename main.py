@@ -4,11 +4,13 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QPushButton, QScrollArea, QLabel, QFrame,
                            QHBoxLayout, QMessageBox, QLineEdit, QMenu,
-                           QInputDialog, QDialog, QPlainTextEdit)
+                           QInputDialog, QDialog, QPlainTextEdit, QSystemTrayIcon)
 from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QPropertyAnimation, QEasingCurve, QSize, QPointF
 from PyQt6.QtGui import (QPalette, QColor, QScreen, QPainter, QLinearGradient, 
-                        QPen, QBrush, QPainterPath, QCursor, QRadialGradient)
+                        QPen, QBrush, QPainterPath, QCursor, QRadialGradient, QIcon)
 import pyperclip
+
+
 
 class CustomMenu(QMenu):
     def __init__(self, *args, **kwargs):
@@ -297,18 +299,22 @@ class ClipItem(QFrame):
         super().__init__(parent)
         self.text = text
         self.manager = manager
+        # 获取基础单位
+        self.base_unit = manager.base_unit if manager else 10
         self.init_ui()
         
     def init_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(10)
+        # 使用百分比设置边距和间距
+        margin = int(self.base_unit * 0.8)
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(margin, margin, margin, margin)
+        self.layout.setSpacing(int(self.base_unit * 0.5))
         
         # 文本标签 - 只显示第一行，限制40个字符
         first_line = self.text.split('\n')[0]
         display_text = first_line[:40] + "..." if len(first_line) > 40 else first_line
         self.label = QLabel(display_text)
-        self.label.setFixedHeight(25)
+        self.label.setFixedHeight(int(self.base_unit * 2))
         self.label.setStyleSheet("""
             QLabel {
                 color: #334155;
@@ -318,7 +324,7 @@ class ClipItem(QFrame):
         
         # 删除按钮
         delete_button = QPushButton("×")
-        delete_button.setFixedSize(20, 20)
+        delete_button.setFixedSize(int(self.base_unit * 1.5), int(self.base_unit * 1.5))
         delete_button.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
@@ -333,8 +339,8 @@ class ClipItem(QFrame):
         """)
         delete_button.clicked.connect(self.confirm_delete)
         
-        layout.addWidget(self.label, stretch=1)
-        layout.addWidget(delete_button)
+        self.layout.addWidget(self.label, stretch=1)
+        self.layout.addWidget(delete_button)
         
         self.setStyleSheet("""
             ClipItem {
@@ -412,8 +418,27 @@ class EmptyClipItem(QFrame):
 class ClipboardManager(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        # 设置任务栏图标
+        icon_path = "icon.jpg"  # 使用当前目录下的icon.jpg
+        self.setWindowIcon(QIcon(icon_path))
+        self.setWindowTitle("悬浮剪切板")
+        
+        # 添加系统托盘图标
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon(icon_path))  # 使用相同的图标
+        
+        # 创建托盘菜单
+        tray_menu = QMenu()
+        show_action = tray_menu.addAction("显示")
+        show_action.triggered.connect(self.show_window)
+        quit_action = tray_menu.addAction("退出")
+        quit_action.triggered.connect(self.close_application)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
         
         # 初始化界面状态
         self.clips = []
@@ -427,13 +452,20 @@ class ClipboardManager(QMainWindow):
         screen = QApplication.primaryScreen()
         screen_size = screen.availableGeometry()
         
-        # 设置窗口大小为屏幕宽度的20%和高度的50%
-        self.window_width = int(screen_size.width() * 0.2)
-        self.window_height = int(screen_size.height() * 0.5)
+        # 计算基础单位
+        self.base_unit = min(screen_size.width(), screen_size.height()) / 100
         
-        # 确保窗口大小在合理范围内
-        self.window_width = max(300, min(self.window_width, 500))
-        self.window_height = max(400, min(self.window_height, 800))
+        # 使用百分比计算尺寸
+        self.window_width = int(self.base_unit * 30)  # 屏幕宽度的20%
+        self.window_height = int(self.base_unit * 40)  # 屏幕高度的50%
+        
+        # 设置最小尺寸
+        min_width = int(self.base_unit * 15)  # 最小宽度为屏幕的15%
+        min_height = int(self.base_unit * 30)  # 最小高度为屏幕的30%
+        self.setMinimumSize(min_width, min_height)
+        
+        # 缩小球的尺寸设置为基础单位的倍数
+        self.collapsed_size = QSize(int(self.base_unit * 3), int(self.base_unit * 3))
         
         self.setFixedSize(self.window_width, self.window_height)
         
@@ -443,7 +475,6 @@ class ClipboardManager(QMainWindow):
         
         self.is_collapsed = False
         self.original_size = None
-        self.collapsed_size = QSize(20, 20)  # 缩小球的尺寸为原来的三分之一
         self.is_animating = False  # 添加动画状态标记
         
         # 添加检测窗口位置的定时器
@@ -476,10 +507,11 @@ class ClipboardManager(QMainWindow):
         
         # 主布局
         self.layout = QVBoxLayout(self.central_widget)
-        margin_h = int(self.window_width * 0.05)   # 水平边距为窗口宽度的5%
-        margin_v = int(self.window_height * 0.025) # 垂直边距为窗口高度的2.5%
+        # 使用百分比设置边距
+        margin_h = int(self.base_unit * 1)  # 水平边距为基础单位的1倍
+        margin_v = int(self.base_unit * 0.8)  # 垂直边距为基础单位的0.8倍
         self.layout.setContentsMargins(margin_h, margin_v, margin_h, margin_v)
-        self.layout.setSpacing(int(self.window_height * 0.02))
+        self.layout.setSpacing(int(self.base_unit * 0.5))
         
         # 标题栏
         self.create_title_bar()
@@ -644,7 +676,7 @@ class ClipboardManager(QMainWindow):
         
         # 缩小按钮
         minimize_button = QPushButton("⎯")  # 使用更长的水平线符号
-        minimize_button.setFixedSize(52, 42)  # 增加宽度，保持高度
+        minimize_button.setFixedSize(int(self.base_unit * 4), int(self.base_unit * 3))
         minimize_button.clicked.connect(self.minimize_to_ball)
         minimize_button.setStyleSheet("""
             QPushButton {
@@ -672,7 +704,7 @@ class ClipboardManager(QMainWindow):
         
         # 关闭按钮
         close_button = QPushButton("×")
-        close_button.setFixedSize(24, 24)
+        close_button.setFixedSize(int(self.base_unit * 2), int(self.base_unit * 2))
         close_button.clicked.connect(self.close_application)
         close_button.setStyleSheet("""
             QPushButton {
@@ -860,20 +892,41 @@ class ClipboardManager(QMainWindow):
         screen_geometry = screen.availableGeometry()
         window_geometry = self.geometry()
         
-        # 只在窗口超出屏幕边缘时触发收缩
-        if window_geometry.left() < screen_geometry.left():
-            # 如果超出左边缘，向左收缩
-            self.collapse_to_float_ball(force_left=True)
-        elif window_geometry.right() > screen_geometry.right():
-            # 如果超出右边缘，向右收缩
+        # 定义边缘触发距离（像素）
+        edge_threshold = 20
+        
+        # 检测是否接近屏幕边缘
+        if window_geometry.right() > screen_geometry.right() - edge_threshold:
+            # 靠近右边缘，触发悬浮球
             self.collapse_to_float_ball(force_right=True)
+        elif window_geometry.left() < screen_geometry.left() + edge_threshold:
+            # 靠近左边缘，触发悬浮球
+            self.collapse_to_float_ball(force_left=True)
+        
+        # 确保窗口始终可见（当不是悬浮球状态时）
+        elif window_geometry.right() < screen_geometry.left() + 20:
+            # 如果窗口几乎完全在左边缘外，强制移回可见区域
+            new_x = screen_geometry.left() + 20
+            self.move(new_x, window_geometry.y())
+        elif window_geometry.left() > screen_geometry.right() - 20:
+            # 如果窗口几乎完全在右边缘外，强制移回可见区域
+            new_x = screen_geometry.right() - window_geometry.width() - 20
+            self.move(new_x, window_geometry.y())
+        elif window_geometry.bottom() < screen_geometry.top() + 20:
+            # 如果窗口在顶部边缘外
+            new_y = screen_geometry.top() + 20
+            self.move(window_geometry.x(), new_y)
+        elif window_geometry.top() > screen_geometry.bottom() - 20:
+            # 如果窗口在底部边缘外
+            new_y = screen_geometry.bottom() - window_geometry.height() - 20
+            self.move(window_geometry.x(), new_y)
 
     def collapse_to_float_ball(self, force_right=False, force_left=False):
         if self.is_collapsed:
             return
             
         self.is_collapsed = True
-        self.is_animating = True  # 开始动画
+        self.is_animating = True
         self.original_size = self.size()
         self.original_pos = self.pos()
         
@@ -886,13 +939,15 @@ class ClipboardManager(QMainWindow):
         screen_geometry = screen.availableGeometry()
         current_pos = self.pos()
         
-        # 修改位置计算逻辑
+        ball_visible_portion = 1  # 设置悬浮球可见部分为20%
+        visible_width = int(self.collapsed_size.width() * ball_visible_portion)
+        
         if force_left:
-            # 在左侧时，让球体大部分在屏幕外，只露出右边一小部分
-            target_x = screen_geometry.left() - 390  # 向左偏移(宽度-15)像素，这样只露出15像素
+            # 在左侧时，让球体80%在屏幕外，只露出20%
+            target_x = screen_geometry.left() -  int(self.collapsed_size.width() * 9)
         elif force_right:
-            # 在右侧时，让球体大部分在屏幕外，只露出左边一小部分
-            target_x = screen_geometry.right() - 15
+            # 在右侧时，让球体80%在屏幕外，只露出20%
+            target_x = screen_geometry.right() - visible_width
         else:
             return
         
@@ -923,11 +978,11 @@ class ClipboardManager(QMainWindow):
         screen_geometry = screen.availableGeometry()
         current_pos = self.pos()
         
-        # 确定展开方向
+        # 确定展开方向，并远离边缘一定距离
         if current_pos.x() < screen_geometry.center().x():
-            target_x = screen_geometry.left() + 10
+            target_x = screen_geometry.left() + 50  # 增加距离，避免立即触发收缩
         else:
-            target_x = screen_geometry.right() - self.original_size.width() - 10
+            target_x = screen_geometry.right() - self.original_size.width() - 50  # 增加距离，避免立即触发收缩
             
         start_geometry = self.geometry()
         end_geometry = QRect(QPoint(target_x, current_pos.y()), self.original_size)
@@ -953,6 +1008,13 @@ class ClipboardManager(QMainWindow):
             self.original_pos = self.pos()
             # 传入 force_right=True 强制收缩到右侧
             self.collapse_to_float_ball(force_right=True)
+
+    def show_window(self):
+        """从托盘显示窗口"""
+        if self.is_collapsed:
+            self.expand_from_float_ball()
+        self.show()
+        self.activateWindow()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
