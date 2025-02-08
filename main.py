@@ -350,7 +350,9 @@ class ClipItem(QFrame):
         
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            pyperclip.copy(self.text)
+            # 去除前后的空格和换行
+            cleaned_text = self.text.strip()
+            pyperclip.copy(cleaned_text)
             self.flash_feedback()
         elif event.button() == Qt.MouseButton.RightButton and self.manager:
             self.show_context_menu(event.pos())
@@ -641,19 +643,30 @@ class ClipboardManager(QMainWindow):
         """)
         
         # 缩小按钮
-        minimize_button = QPushButton("-")
-        minimize_button.setFixedSize(28, 28)  # 稍微大一点的按钮
+        minimize_button = QPushButton("⎯")  # 使用更长的水平线符号
+        minimize_button.setFixedSize(52, 42)  # 增加宽度，保持高度
         minimize_button.clicked.connect(self.minimize_to_ball)
         minimize_button.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 color: #64748b;
                 border: none;
-                font-size: 20px;
+                font-size: 32px;  # 更大的字体
                 font-weight: bold;
+                padding: 0 25px;  # 更大的点击判定区域
+                margin-right: 15px;  # 向左移动
+                border-radius: 8px;  # 默认就有圆角
             }
             QPushButton:hover {
                 color: #3b82f6;
+                background: rgba(59, 130, 246, 0.1);  # 悬停背景
+                transform: scale(1.05);  # 轻微放大效果
+                transition: all 0.2s ease;  # 平滑过渡
+            }
+            QPushButton:pressed {
+                color: #2563eb;
+                background: rgba(59, 130, 246, 0.2);  # 点击时背景更深
+                transform: scale(0.95);  # 点击时缩小效果
             }
         """)
         
@@ -708,11 +721,14 @@ class ClipboardManager(QMainWindow):
         
     def add_clip(self):
         content = pyperclip.paste()
-        if content and content not in self.clips:
-            self.clips.append(content)
-            if len(self.clips) > 100:  # 增加最大存储量
-                self.clips.pop(0)
-            self.search_clips(self.search_input.text())
+        if content:
+            # 去除前后的空格和换行
+            cleaned_content = content.strip()
+            if cleaned_content and cleaned_content not in self.clips:
+                self.clips.append(cleaned_content)
+                if len(self.clips) > 100:  # 增加最大存储量
+                    self.clips.pop(0)
+                self.search_clips(self.search_input.text())
             
     def delete_clip(self, text):
         if text in self.clips:
