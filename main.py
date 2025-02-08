@@ -640,6 +640,23 @@ class ClipboardManager(QMainWindow):
             }
         """)
         
+        # 缩小按钮
+        minimize_button = QPushButton("-")
+        minimize_button.setFixedSize(28, 28)  # 稍微大一点的按钮
+        minimize_button.clicked.connect(self.minimize_to_ball)
+        minimize_button.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #64748b;
+                border: none;
+                font-size: 20px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                color: #3b82f6;
+            }
+        """)
+        
         # 关闭按钮
         close_button = QPushButton("×")
         close_button.setFixedSize(24, 24)
@@ -658,6 +675,8 @@ class ClipboardManager(QMainWindow):
         """)
         
         title_layout.addWidget(title_label)
+        title_layout.addStretch()  # 添加弹性空间
+        title_layout.addWidget(minimize_button)
         title_layout.addWidget(close_button)
         self.layout.addWidget(self.title_bar)
         
@@ -825,18 +844,15 @@ class ClipboardManager(QMainWindow):
         screen_geometry = screen.availableGeometry()
         window_geometry = self.geometry()
         
-        # 计算窗口有多少比例在屏幕外
-        visible_width = window_geometry.width()
+        # 只在窗口超出屏幕边缘时触发收缩
         if window_geometry.left() < screen_geometry.left():
-            visible_width += window_geometry.left() - screen_geometry.left()
+            # 如果超出左边缘，向左收缩
+            self.collapse_to_float_ball(force_left=True)
         elif window_geometry.right() > screen_geometry.right():
-            visible_width -= window_geometry.right() - screen_geometry.right()
-            
-        # 如果可见部分小于三分之二，则折叠成悬浮球
-        if visible_width < window_geometry.width() * 2/3:
-            self.collapse_to_float_ball()
-            
-    def collapse_to_float_ball(self):
+            # 如果超出右边缘，向右收缩
+            self.collapse_to_float_ball(force_right=True)
+
+    def collapse_to_float_ball(self, force_right=False, force_left=False):
         if self.is_collapsed:
             return
             
@@ -854,12 +870,16 @@ class ClipboardManager(QMainWindow):
         screen_geometry = screen.availableGeometry()
         current_pos = self.pos()
         
-        # 调整位置，让球稍微露出屏幕外一点
-        if current_pos.x() < screen_geometry.center().x():
-            target_x = screen_geometry.left() - self.collapsed_size.width() // 3
+        # 修改位置计算逻辑
+        if force_left:
+            # 在左侧时，让球体大部分在屏幕外，只露出右边一小部分
+            target_x = screen_geometry.left() - 390  # 向左偏移(宽度-15)像素，这样只露出15像素
+        elif force_right:
+            # 在右侧时，让球体大部分在屏幕外，只露出左边一小部分
+            target_x = screen_geometry.right() - 15
         else:
-            target_x = screen_geometry.right() - self.collapsed_size.width() * 2 // 3
-            
+            return
+        
         target_y = max(min(current_pos.y(), 
                           screen_geometry.bottom() - self.collapsed_size.height() - 5),
                       screen_geometry.top() + 5)
@@ -870,7 +890,7 @@ class ClipboardManager(QMainWindow):
         self.anim.setStartValue(start_geometry)
         self.anim.setEndValue(end_geometry)
         self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
-        self.anim.finished.connect(lambda: setattr(self, 'is_animating', False))  # 动画结束
+        self.anim.finished.connect(lambda: setattr(self, 'is_animating', False))
         self.anim.start()
         
     def expand_from_float_ball(self):
@@ -879,7 +899,7 @@ class ClipboardManager(QMainWindow):
             
         self.is_collapsed = False
         self.is_animating = True  # 开始动画
-        
+               
         self.anim = QPropertyAnimation(self, b"geometry")
         self.anim.setDuration(300)
         
@@ -910,6 +930,13 @@ class ClipboardManager(QMainWindow):
     def show_content(self):
         # 显示所有控件
         self.central_widget.show()
+
+    def minimize_to_ball(self):
+        """直接缩小到悬浮球"""
+        if not self.is_collapsed:
+            self.original_pos = self.pos()
+            # 传入 force_right=True 强制收缩到右侧
+            self.collapse_to_float_ball(force_right=True)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
